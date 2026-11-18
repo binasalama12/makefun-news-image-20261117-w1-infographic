@@ -1,54 +1,76 @@
-"""make.fun entry news-image-20261117, wallet 1: infographic collage.
+"""Wallet 1 entry for news-image-20261117: the infographic collage.
 
-Artwork: "The World in One Picture" — a dark-blue infographic collage for
-Tuesday 17 November 2026. A lead panel shows Ukraine's strike collapsing a
-span of the Kerch Bridge; six story cards below cover Bahrain's drone
-interception, Japan scrambling jets, the United States losing measles-free
-status, the Russian warplane crash that killed 19, Britain's sanctions on
-settlement builders, and the COP31 draft climate deal.
+Picture summary: a dark-blue infographic titled "The World in One
+Picture" for Tuesday 17 November 2026. Its lead panel draws Ukraine's
+strike collapsing one span of the Kerch Bridge into the sea. Six cards
+underneath it cover Bahrain blocking Iranian drones, Japan scrambling
+jets, the United States losing measles-free status, a Russian warplane
+crash that killed nineteen people, British sanctions on settlement
+builders, and the COP31 draft climate deal from Antalya.
 
-The grader runs this program twice with no network. It copies the bundled
-entry.png to the output directory in fixed-size blocks and confirms the
-delivered byte count matches the source, so both runs produce the exact
-same file.
+Before publishing, this program inspects the PNG header of the bundled
+picture: it reads the IHDR chunk, extracts the pixel dimensions, and
+refuses to publish anything wider or taller than 1024 pixels. It then
+moves the picture to the output folder through a bytearray buffer and
+reports how many buffer loads the transfer needed.
 """
 import os
+import struct
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-PICTURE = os.path.join(HERE, "entry.png")
-BLOCK = 32 * 1024
+FOLDER = os.path.dirname(os.path.abspath(__file__))
+ARTWORK = os.path.join(FOLDER, "entry.png")
+BUFFER_SIZE = 16384
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+LIMIT = 1024
 
 
-def deliver(source_path, out_dir):
-    """Stream source_path into out_dir/entry.png; return bytes written."""
-    os.makedirs(out_dir, exist_ok=True)
-    target = os.path.join(out_dir, "entry.png")
-    sent = 0
-    with open(source_path, "rb") as fin:
-        with open(target, "wb") as fout:
-            while True:
-                chunk = fin.read(BLOCK)
-                if not chunk:
-                    break
-                fout.write(chunk)
-                sent += len(chunk)
-    return sent
+def artwork_dimensions(path):
+    """Return (width, height) parsed from the PNG IHDR chunk."""
+    with open(path, "rb") as handle:
+        header = handle.read(24)
+    if not header.startswith(PNG_SIGNATURE):
+        raise ValueError("bundled artwork is not a PNG file")
+    if header[12:16] != b"IHDR":
+        raise ValueError("first PNG chunk is not IHDR")
+    width, height = struct.unpack(">II", header[16:24])
+    return width, height
 
 
-def main():
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    size = os.path.getsize(PICTURE)
-    if size == 0 or size > 1024 * 1024:
-        raise SystemExit(f"entry.png size {size} outside the 1 MiB cap")
-    written = deliver(PICTURE, out_dir)
-    blocks = (size + BLOCK - 1) // BLOCK
-    print(f"source spans {blocks} blocks of {BLOCK} bytes")
-    if written != size:
-        raise SystemExit(f"short copy: {written} of {size} bytes")
-    print(f"w1 infographic collage delivered: {written} bytes")
+def transfer(source, destination):
+    """Copy source to destination through a reusable bytearray."""
+    buffer = bytearray(BUFFER_SIZE)
+    view = memoryview(buffer)
+    moved = 0
+    loads = 0
+    with open(source, "rb") as fin, open(destination, "wb") as fout:
+        while True:
+            count = fin.readinto(buffer)
+            if count == 0:
+                break
+            fout.write(view[:count])
+            moved += count
+            loads += 1
+    return moved, loads
+
+
+def run():
+    width, height = artwork_dimensions(ARTWORK)
+    if width > LIMIT or height > LIMIT:
+        raise SystemExit(f"artwork is {width}x{height}, over the cap")
+    out_folder = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+    os.makedirs(out_folder, exist_ok=True)
+    destination = os.path.join(out_folder, "entry.png")
+    moved, loads = transfer(ARTWORK, destination)
+    average_load = moved / loads if loads else 0
+    print(f"average buffer load: {average_load:.1f} bytes")
+    expected = os.path.getsize(ARTWORK)
+    if moved != expected:
+        raise SystemExit(f"moved {moved} bytes, artwork holds {expected}")
+    print(f"collage {width}x{height} published in {loads} buffer loads")
+    print(f"total bytes published: {moved}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run())
